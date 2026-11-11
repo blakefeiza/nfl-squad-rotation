@@ -3,7 +3,7 @@
   'use strict';
   var D, S, N, W, P, ST = [], ALL = [], lastWeek = 0, TEAMS = null;
   var $ = function (id) { return document.getElementById(id); };
-  var C = { start: '#e0561a', sub: '#2f6fbd', bench: '#9aa3b2', inj: '#c97b84', st: '#c9961a' };
+  var C = { start: '#e0561a', sub: '#2f6fbd', bench: '#9aa3b2', inj: '#c97b84', st: '#e0561a' };   // start, sub and st are replaced by each team's palette
   var LABEL = { start: 'Started', sub: 'Off the bench', bench: 'On the bench', inj: 'Hurt', none: 'Not on the roster', st: 'Played special teams' };
   var UNIT_WORD = { Offense: 'offense', Defense: 'defense', 'Special teams': 'special-teams' };
   var state = { view: 'Offense', spot: null, sel: null, game: null };     // sel = { id, idx }
@@ -22,8 +22,10 @@
     state.spot = null; state.sel = null; state.game = null;
     $('title').textContent = D.teamName;
     $('sub').innerHTML = 'Squad rotation - <span class="acc">through week ' + lastWeek + '</span>';
-    document.documentElement.style.setProperty('--accent', darken(D.color || '#d4560f', 0.3));
-    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters and ESPN depth charts, ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')';
+    var pal = D.palette || {}; C.start = pal.start || C.start; C.sub = pal.sub || C.sub; C.st = C.start;
+    document.documentElement.style.setProperty('--accent', darken(C.start, 0.25));
+    var logo = $('logo'); logo.hidden = false; logo.alt = D.teamName + ' logo'; logo.src = 'logos/' + D.team + '.png';
+    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters and ESPN depth charts, ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')  \u00b7  Inspired by Oliver Hopkins (Opta Analyst)';
     document.title = D.teamName + ' squad rotation';
   }
   function loadTeam(code) {
@@ -161,6 +163,7 @@
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { state.sel = null; state.game = null; state.spot = null; tip.classList.remove('on'); render(); } });
 
+  $('logo').addEventListener('error', function () { this.hidden = true; });
   $('team').addEventListener('change', function () { loadTeam(this.value); });
   addEventListener('hashchange', function () { var c = location.hash.slice(1).toUpperCase(); if (TEAMS && c && c !== $('team').value && TEAMS.some(function (t) { return t.code === c; })) { $('team').value = c; loadTeam(c); } });
   fetch('data/teams.json').then(function (r) { return r.json(); }).then(function (idx) {

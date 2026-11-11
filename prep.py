@@ -24,6 +24,14 @@ NAMES = {"ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore
          "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings", "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
          "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers", "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
          "TEN": "Tennessee Titans", "WAS": "Washington Commanders"}
+# glyph colors per team: "start" fills the pies of starters, "sub" the pies of players who came off the bench. Each pair is picked to contrast with each other and with the cream page.
+PALETTE = {"ARI": ("#97233f", "#e0a526"), "ATL": ("#a71930", "#9aa4ab"), "BAL": ("#3d2a8c", "#b08d1c"), "BUF": ("#00338d", "#d03a4d"), "CAR": ("#0085ca", "#3b4048"),
+           "CHI": ("#e0561a", "#1e3a6e"), "CIN": ("#fb4f14", "#2a2a2a"), "CLE": ("#6b3f1d", "#ff5a1f"), "DAL": ("#1f5aa6", "#8a97a3"), "DEN": ("#fb4f14", "#1b3a63"),
+           "DET": ("#0076b6", "#8a9199"), "GB": ("#2f7d46", "#e0a312"), "HOU": ("#a71930", "#1c3a52"), "IND": ("#2a62c4", "#7b8794"), "JAX": ("#00778b", "#b58a10"),
+           "KC": ("#e31837", "#e8a317"), "LA": ("#1b4ba0", "#e0a60a"), "LAC": ("#0080c6", "#d49b00"), "LV": ("#2b2f33", "#8a9199"), "MIA": ("#008e97", "#f0742a"),
+           "MIN": ("#4f2683", "#e0a60a"), "NE": ("#1c3f77", "#c8102e"), "NO": ("#b8902d", "#2b2b2b"), "NYG": ("#1a3f9a", "#a71930"), "NYJ": ("#125740", "#9aa5ad"),
+           "PHI": ("#004c54", "#8a9199"), "PIT": ("#2a2a2a", "#e0a60a"), "SEA": ("#4c9a1a", "#1b3a63"), "SF": ("#aa0000", "#b3995d"), "TB": ("#d50a0a", "#3b3b3b"),
+           "TEN": ("#3d86d0", "#c8102e"), "WAS": ("#5a1414", "#e09a00")}
 (HERE / "raw").mkdir(exist_ok=True)
 for k, url in SRC.items():
     dst = HERE / "raw" / f"{k}.csv"
@@ -195,7 +203,7 @@ def build(TEAM):
         p["share"] = round(p["snaps"] / possible[p["unit"]], 4) if possible[p["unit"]] else 0
     players.sort(key=lambda p: (ORDER.index(p["group"]), -p["snaps"], p["name"]))
 
-    out = dict(team=TEAM, teamName=NAMES.get(TEAM, TEAM), color=COLORS.get(TEAM, "#d4560f"), season=SEASON, asof=max((s["date"] for s in sched if s["played"]), default=""), weeks_played=len(played_weeks),
+    out = dict(team=TEAM, teamName=NAMES.get(TEAM, TEAM), color=PALETTE[TEAM][0], palette=dict(start=PALETTE[TEAM][0], sub=PALETTE[TEAM][1]), season=SEASON, asof=max((s["date"] for s in sched if s["played"]), default=""), weeks_played=len(played_weeks),
                sched=[{k: v for k, v in s.items() if k != "kickoff"} for s in sched], unit_snaps=unit_snaps, possible=possible, groups=ORDER, players=players, stPlayers=st_players, stGroups=["Specialists", "Coverage and returns"])
     return out
 
@@ -207,7 +215,7 @@ for tm in teams:
     out = build(tm)
     (HERE / "data" / f"{tm}.json").write_text(json.dumps(out, separators=(",", ":")))
     rec = [sum(1 for s in out["sched"] if s["result"] == r) for r in ("W", "L", "T")]
-    index.append(dict(code=tm, name=out["teamName"], color=out["color"], w=rec[0], l=rec[1], t=rec[2], weeks=out["weeks_played"], asof=out["asof"]))
+    index.append(dict(code=tm, name=out["teamName"], color=out["color"], sub=out["palette"]["sub"], w=rec[0], l=rec[1], t=rec[2], weeks=out["weeks_played"], asof=out["asof"]))
     print(f"{tm}: {len(out['players'])} players, {out['weeks_played']} games, {len(out['stPlayers'])} special-teams rows")
 if not ARGS:
     index.sort(key=lambda x: x["name"])
