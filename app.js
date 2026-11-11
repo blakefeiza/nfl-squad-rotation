@@ -25,7 +25,7 @@
     var pal = D.palette || {}; C.start = pal.start || C.start; C.sub = pal.sub || C.sub; C.st = C.start;
     document.documentElement.style.setProperty('--accent', darken(C.start, 0.25));
     var logo = $('logo'); logo.hidden = false; logo.alt = D.teamName + ' logo'; logo.src = 'logos/' + D.team + '.png';
-    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters and ESPN depth charts, ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')  \u00b7  Inspired by Oliver Hopkins (Opta Analyst)';
+    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters and ESPN depth charts, ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')  \u00b7  Inspired by Oliver Hopkins';
     document.title = D.teamName + ' squad rotation';
   }
   function loadTeam(code) {
