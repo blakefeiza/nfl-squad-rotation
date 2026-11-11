@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Squad Rotation</title>
+<meta name="description" content="Every player in every game: who started, who came off the bench, who sat, and who was hurt.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="app">
+  <header class="head">
+    <h1 id="title">&nbsp;</h1>
+    <div class="rule"></div>
+    <div class="sub" id="sub">&nbsp;</div>
+  </header>
+
+  <nav class="bar">
+    <div class="picks"><select id="team" aria-label="Team"><option>Loading...</option></select>
+    <div class="tabs" id="tabs" role="tablist">
+      <button data-v="Offense" aria-selected="true">Offense</button><button data-v="Defense" aria-selected="false">Defense</button><button data-v="Special teams" aria-selected="false">Special teams</button>
+    </div></div>
+    <div id="legend" class="legend" role="group" aria-label="Status key"></div>
+  </nav>
+
+  <div id="detail" class="detail" hidden></div>
+
+  <section id="panel" class="panel"></section>
+
+  <details class="method">
+    <summary>How each glyph is decided</summary>
+    <ul>
+      <li><b>Pie fill:</b> the player's snaps divided by the team's offense, defense or special-teams snaps in that game. The right-hand column is the same share over every game so far.</li>
+      <li><b>Started:</b> the first player listed at a depth-chart slot just before kickoff who actually played. If the listed starter was out, the next player who played counts as the starter.</li>
+      <li><b>Off the bench:</b> played offense or defense snaps but did not start.</li>
+      <li><b>On the bench:</b> on the roster and healthy, but took no snaps in that unit.</li>
+      <li><b>Hurt:</b> out or doubtful on the injury report, on injured reserve, or inactive with an injury designation.</li>
+      <li>Offense and defense list players with at least one snap there, or who were hurt. Special teams lists everyone who took a special-teams snap, kickers, punters and long snappers included.</li>
+    </ul>
+  </details>
+
+  <footer class="foot" id="foot"></footer>
+</main>
+<div id="tip" role="tooltip"></div>
+<script src="app.js"></script>
+</body>
+</html>
