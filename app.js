@@ -1,7 +1,7 @@
 // Squad rotation: one row per player, one glyph per game. Reads window.ROTATION (written by prep.py).
 (function () {
   'use strict';
-  var D, S, N, W, P, ST = [], ALL = [], lastWeek = 0, TEAMS = null;
+  var D, S, N, W, P, ST = [], ALL = [], lastWeek = 0, TEAMS = null, SEASONS = [], season = 0;
   var $ = function (id) { return document.getElementById(id); };
   var C = { start: '#e0561a', sub: '#2f6fbd', bench: '#9aa3b2', inj: '#c97b84', st: '#e0561a' };   // start, sub and st are replaced by each team's palette
   var LABEL = { start: 'Started', sub: 'Off the bench', bench: 'On the bench', inj: 'Hurt', none: 'Not on the roster', st: 'Played special teams' };
@@ -21,17 +21,18 @@
     ALL = P.concat(ST); lastWeek = S.filter(function (g) { return g.played; }).slice(-1)[0].week;
     state.spot = null; state.sel = null; state.game = null;
     $('title').textContent = D.teamName;
-    $('sub').innerHTML = 'Squad rotation - <span class="acc">through week ' + lastWeek + '</span>';
+    $('sub').innerHTML = 'Squad rotation - <span class="acc">' + D.season + ' season, through week ' + lastWeek + '</span>';
     var pal = D.palette || {}; C.start = pal.start || C.start; C.sub = pal.sub || C.sub; C.st = C.start;
-    document.documentElement.style.setProperty('--accent', darken(C.start, 0.25));
+    document.documentElement.style.setProperty('--accent', darken(C.start, 0.25)); document.documentElement.style.setProperty('--hi', C.start);
     var logo = $('logo'); logo.hidden = false; logo.alt = D.teamName + ' logo'; logo.src = 'logos/' + D.team + '.png';
-    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters and ESPN depth charts, ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')  \u00b7  Inspired by Oliver Hopkins';
+    $('foot').innerHTML = 'Viz by <b>Blake Feiza</b>  \u00b7  Data: nflverse snap counts, injury reports, weekly rosters, ESPN depth charts' + (D.hasYpp ? ', play-by-play and on-field participation' : '') + ', ' + D.season + ' NFL season (games played as of ' + nice(D.asof) + ')  \u00b7  Inspired by Oliver Hopkins';
     document.title = D.teamName + ' squad rotation';
   }
+  function hashFor(code) { return (season === SEASONS[0] ? '' : season + '-') + code; }
   function loadTeam(code) {
     $('panel').innerHTML = '<div class="loading">Loading ' + esc(code) + '...</div>';
-    return fetch('data/' + code + '.json').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (d) {
-      use(d); render(); try { localStorage.setItem('rotation-team', code); } catch (e) {} if (location.hash.slice(1) !== code) history.replaceState(null, '', '#' + code);
+    return fetch('data/' + season + '/' + code + '.json').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (d) {
+      use(d); render(); try { localStorage.setItem('rotation-team', code); } catch (e) {} if (location.hash.slice(1) !== hashFor(code)) history.replaceState(null, '', '#' + hashFor(code));
     }).catch(function () { $('panel').innerHTML = '<div class="loading">Could not load that team. Try again in a moment.</div>'; });
   }
 
@@ -61,37 +62,70 @@
     var name = st ? { st: 'Played', bench: 'Did not play', inj: 'Hurt' } : { start: 'Started', sub: 'Off the bench', bench: 'Bench', inj: 'Hurt' };
     var demo = { start: ['start', 0.7, 0, 0, ''], sub: ['sub', 0.45, 0, 0, ''], st: ['st', 0.7, 0, 0, ''], bench: ['bench', 0, 0, 0, ''], inj: ['inj', 0, 0, 0, ''] };
     $('legend').innerHTML = keys.map(function (k) { return '<button class="key" data-s="' + k + '" aria-pressed="' + (state.spot === k ? 'true' : 'false') + '">' + glyph(demo[k]) + name[k] + '</button>'; }).join('') +
-      '<span class="note">Pie = share of snaps</span>';
+      '<span class="note">' + (st ? 'Pie = share of snaps' : D.hasYpp ? 'Pie = share of snaps \u00b7 Dot = yards per play' : 'Pie = share of snaps \u00b7 Yards per play appears once nflverse posts the season\u2019s on-field data') + '</span>';
+  }
+
+  // ---------- yards per play with the player on the field (offense and defense only) ----------
+  function ystats(unit) {
+    if (!D.hasYpp || !D.yppTeam || !D.yppTeam[unit]) return null;
+    var min = D.minYppPlays || 100, q = P.filter(function (p) { return p.unit === unit && p.ypp && p.ypp[0] >= min; });
+    if (q.length < 3) return null;
+    var vals = q.map(function (p) { return p.ypp[1]; }), best = q.slice().sort(function (a, b) { return unit === 'Offense' ? b.ypp[1] - a.ypp[1] : a.ypp[1] - b.ypp[1]; })[0];   // best = most yards on offense, fewest allowed on defense
+    var lo = Math.floor(Math.min.apply(null, vals) * 0.9), hi = Math.ceil(Math.max.apply(null, vals) * 1.05);
+    return { unit: unit, q: q, best: best, lo: lo, hi: Math.max(hi, lo + 1), avg: D.yppTeam[unit].avg, plays: D.yppTeam[unit].plays, min: min };
+  }
+  var YW = 150;
+  function yx(ys, v) { return (v - ys.lo) / (ys.hi - ys.lo) * (YW - 40) + 8; }
+  function cellY(p, ys, dimRow) {
+    var cls = 'y' + (dimRow ? ' dim' : '');
+    if (!p.ypp || p.ypp[0] < ys.min) return '<div class="' + cls + '"><span class="na">' + (p.ypp ? '&lt;' + ys.min + ' plays' : '\u2013') + '</span></div>';
+    var isBest = ys.best.id === p.id, x = yx(ys, p.ypp[1]);
+    return '<div class="' + cls + '" data-p="' + p.idx + '"><div class="axis"></div><div class="avg" style="left:' + yx(ys, ys.avg).toFixed(1) + 'px"></div><div class="dot' + (isBest ? ' hi' : '') + '" style="left:' + x.toFixed(1) + 'px"></div>' +
+      (isBest ? '<span class="val hi" style="left:' + (x + 12).toFixed(1) + 'px">' + p.ypp[1].toFixed(1) + '</span>' : '') + '</div>';
+  }
+  function headerY(ys) {
+    var bw = 0.5, bins = [], i, W2 = YW - 40;
+    for (i = ys.lo; i < ys.hi; i += bw) bins.push({ x: i, n: 0 });
+    ys.q.forEach(function (p) { bins[Math.min(bins.length - 1, Math.floor((p.ypp[1] - ys.lo) / bw))].n++; });
+    var mx = Math.max.apply(null, bins.map(function (b) { return b.n; })), bestBin = Math.min(bins.length - 1, Math.floor((ys.best.ypp[1] - ys.lo) / bw));
+    var bars = bins.map(function (b, j) { return b.n ? '<i class="' + (j === bestBin ? 'hi' : '') + '" style="left:' + yx(ys, b.x).toFixed(1) + 'px;width:' + Math.max(2, bw / (ys.hi - ys.lo) * W2 - 1).toFixed(1) + 'px;height:' + (b.n / mx * 34).toFixed(1) + 'px"></i>' : ''; }).join('');
+    var title = ys.unit === 'Offense' ? 'Yards per play<br>(team ' + ys.avg.toFixed(1) + ')' : 'Yards allowed per<br>play (team ' + ys.avg.toFixed(1) + ')';
+    return '<div class="yh"><div class="hist">' + bars + '<u style="left:' + yx(ys, ys.avg).toFixed(1) + 'px"></u></div><span class="t">' + title + '</span></div>';
+  }
+  function yTip(p, ys) {
+    var e = p.ypp, d = e[1] - ys.avg, good = ys.unit === 'Offense' ? d > 0 : d < 0, word = ys.unit === 'Offense' ? 'yards per play' : 'yards allowed per play';
+    return '<div class="n">' + esc(p.name) + '</div><div class="m">' + esc(p.pos) + (p.jersey ? ' \u00b7 #' + p.jersey : '') + '</div>' +
+      '<div class="s"><i style="background:' + C.start + '"></i>' + e[1].toFixed(1) + ' ' + word + '</div><div class="d">With him on the field: ' + e[0] + ' plays<br>Team: ' + ys.avg.toFixed(1) + ' (' + (d >= 0 ? '+' : '\u2212') + Math.abs(d).toFixed(1) + (Math.abs(d) < 0.05 ? '' : good ? ', better' : ', worse') + ')</div>';
   }
 
   // ---------- grid ----------
   function sorted(list) { return list.slice().sort(function (a, b) { return b.share - a.share || (b.counts.start || 0) - (a.counts.start || 0) || a.name.localeCompare(b.name); }); }
-  function rowHTML(p) {
+  function rowHTML(p, ys) {
     var cells = '', dimRow = state.sel && state.sel.id !== p.id;
     for (var g = 0; g < N; g++) {
       var c = p.cells[g], dim = (state.spot && (!c || c[0] !== state.spot)) || (state.game !== null && state.game !== g);
       cells += '<div class="cell' + (dim ? ' dim' : '') + '" data-p="' + p.idx + '" data-g="' + g + '">' + glyph(c) + '</div>';
     }
-    return '<div class="row' + (state.sel && state.sel.id === p.id ? ' sel' : '') + (dimRow ? ' dim' : '') + '"><div class="nm" data-n="' + p.idx + '"><span class="t">' + esc(p.name) + '</span><i>' + esc(p.pos) + '</i></div>' + cells + '<div class="shr">' + pct(p.share) + '</div></div>';
+    return '<div class="row' + (state.sel && state.sel.id === p.id ? ' sel' : '') + (dimRow ? ' dim' : '') + '"><div class="nm" data-n="' + p.idx + '"><span class="t">' + esc(p.name) + '</span><i>' + esc(p.pos) + '</i></div>' + cells + '<div class="shr">' + pct(p.share) + '</div>' + (ys ? cellY(p, ys, dimRow) : '') + '</div>';
   }
-  function headerHTML() {
+  function headerHTML(ys) {
     var h = '<div class="hdr"><div class="corner"></div>';
     S.forEach(function (g, i) {
       var cls = g.played ? (g.result === 'W' ? 'w' : g.result === 'L' ? 'l' : '') : 'future';
       var tip = 'Week ' + g.week + ': ' + (g.home ? 'vs ' : 'at ') + g.opp + (g.played ? ', ' + g.result + ' ' + g.us + '–' + g.them : ' (upcoming)');
       h += '<button class="gh ' + cls + '" data-g="' + i + '" title="' + tip + '" aria-pressed="' + (state.game === i ? 'true' : 'false') + '"><span class="opp">' + (g.home ? '' : '@') + g.opp + '</span><span class="res"></span><span class="wk">' + g.week + '</span></button>';
     });
-    return h + '<div class="sh">snap<br>share</div></div>';
+    return h + '<div class="sh">snap<br>share</div>' + (ys ? headerY(ys) : '') + '</div>';
   }
   function renderPanel() {
-    var isST = state.view === 'Special teams', list = isST ? ST : P.filter(function (p) { return p.unit === state.view; }), groups = isST ? D.stGroups : D.groups, body = '';
+    var isST = state.view === 'Special teams', list = isST ? ST : P.filter(function (p) { return p.unit === state.view; }), groups = isST ? D.stGroups : D.groups, body = '', ys = isST ? null : ystats(state.view);
     groups.forEach(function (grp) {
       var rows = sorted(list.filter(function (p) { return p.group === grp; }));
       if (!rows.length) return;
       if (body) body += '<div class="grp-l"></div>';
-      body += rows.map(rowHTML).join('');
+      body += rows.map(function (p) { return rowHTML(p, ys); }).join('');
     });
-    $('panel').innerHTML = '<div class="inner" style="--n:' + N + '">' + headerHTML() + body + '</div>';
+    $('panel').innerHTML = '<div class="inner' + (ys ? ' hy' : '') + '" style="--n:' + N + '">' + headerHTML(ys) + body + '</div>';
   }
 
   // ---------- selection bar (only shown when something is selected) ----------
@@ -138,16 +172,20 @@
   }
   var panel = $('panel');
   panel.addEventListener('mouseover', function (e) {
+    var yc = e.target.closest('.y');
+    if (yc && yc.dataset.p) { var yp = ALL[+yc.dataset.p], ysx = ystats(yp.unit); if (ysx) { tip.innerHTML = yTip(yp, ysx); tip.classList.add('on'); placeTip(e.clientX, e.clientY); } return; }
     var cell = e.target.closest('.cell'); if (!cell) return;
     var g = +cell.dataset.g; tip.innerHTML = tipHTML(ALL[+cell.dataset.p], g); tip.classList.add('on'); placeTip(e.clientX, e.clientY);
     hl.textContent = '.cell[data-g="' + g + '"]{background:rgba(18,21,28,.035)}';
   });
   panel.addEventListener('mousemove', function (e) { if (tip.classList.contains('on')) placeTip(e.clientX, e.clientY); });
-  panel.addEventListener('mouseout', function (e) { if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.cell')) { tip.classList.remove('on'); hl.textContent = ''; } });
+  panel.addEventListener('mouseout', function (e) { if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('.cell, .y')) { tip.classList.remove('on'); hl.textContent = ''; } });
 
   // ---------- clicks ----------
   document.addEventListener('click', function (e) {
     var t = e.target, cell = t.closest('.cell'), nm = t.closest('.nm'), gh = t.closest('.gh'), key = t.closest('.key');
+    var ycell = t.closest('.y');
+    if (ycell && ycell.dataset.p && matchMedia('(hover: none)').matches) { var yr = ycell.getBoundingClientRect(), yq = ALL[+ycell.dataset.p]; tip.innerHTML = yTip(yq, ystats(yq.unit)); tip.classList.add('on'); placeTip(yr.left, yr.bottom); return; }
     if (cell && matchMedia('(hover: none)').matches) { var r = cell.getBoundingClientRect(); tip.innerHTML = tipHTML(ALL[+cell.dataset.p], +cell.dataset.g); tip.classList.add('on'); placeTip(r.left, r.bottom); return; }
     tip.classList.remove('on');
     if (nm) { var p = ALL[+nm.dataset.n]; state.sel = state.sel && state.sel.id === p.id ? null : { id: p.id, idx: p.idx }; state.game = null; state.spot = null; render(); return; }
@@ -165,13 +203,23 @@
 
   $('logo').addEventListener('error', function () { this.hidden = true; });
   $('team').addEventListener('change', function () { loadTeam(this.value); });
-  addEventListener('hashchange', function () { var c = location.hash.slice(1).toUpperCase(); if (TEAMS && c && c !== $('team').value && TEAMS.some(function (t) { return t.code === c; })) { $('team').value = c; loadTeam(c); } });
-  fetch('data/teams.json').then(function (r) { return r.json(); }).then(function (idx) {
-    TEAMS = idx.teams;
-    $('team').innerHTML = TEAMS.map(function (t) { return '<option value="' + t.code + '">' + esc(t.name) + '</option>'; }).join('');
-    var want = location.hash.slice(1).toUpperCase(), saved = ''; try { saved = localStorage.getItem('rotation-team') || ''; } catch (e) {}
-    var pick = [want, saved, 'CHI'].filter(function (c) { return TEAMS.some(function (t) { return t.code === c; }); })[0] || TEAMS[0].code;
-    $('team').value = pick; return loadTeam(pick);
+  $('season').addEventListener('change', function () { season = +this.value; loadTeam($('team').value); });
+  function parseHash() { var m = /^(?:(\d{4})-)?([A-Z]+)$/.exec(location.hash.slice(1).toUpperCase()); return m ? { season: m[1] ? +m[1] : SEASONS[0], team: m[2] } : null; }
+  addEventListener('hashchange', function () {
+    var h = parseHash(); if (!h || !TEAMS || SEASONS.indexOf(h.season) < 0 || !TEAMS.some(function (t) { return t.code === h.team; })) return;
+    if (h.season === season && h.team === $('team').value) return;
+    season = h.season; $('season').value = season; $('team').value = h.team; loadTeam(h.team);
+  });
+  fetch('data/seasons.json').then(function (r) { return r.json(); }).then(function (j) {
+    SEASONS = j.seasons; $('season').innerHTML = SEASONS.map(function (y) { return '<option value="' + y + '">' + y + '</option>'; }).join('');
+    var h = parseHash(); season = h && SEASONS.indexOf(h.season) >= 0 ? h.season : SEASONS[0]; $('season').value = season;
+    return fetch('data/' + SEASONS[0] + '/teams.json').then(function (r) { return r.json(); }).then(function (idx) {
+      TEAMS = idx.teams;
+      $('team').innerHTML = TEAMS.map(function (t) { return '<option value="' + t.code + '">' + esc(t.name) + '</option>'; }).join('');
+      var saved = ''; try { saved = localStorage.getItem('rotation-team') || ''; } catch (e) {}
+      var pick = [h && h.team, saved, 'CHI'].filter(function (c) { return TEAMS.some(function (t) { return t.code === c; }); })[0] || TEAMS[0].code;
+      $('team').value = pick; return loadTeam(pick);
+    });
   }).catch(function () { $('panel').innerHTML = '<div class="loading">Could not load the data.</div>'; });
   window.__rotation = { state: state, render: render, get D() { return D; } };
 })();

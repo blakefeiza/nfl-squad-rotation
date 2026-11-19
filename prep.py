@@ -2,8 +2,10 @@
 """NFL squad rotation: one row per player, one column per game, one glyph per player-game.
 Downloads nflverse data (snap counts, injury reports, weekly rosters, ESPN depth chart snapshots, schedule), classifies every
 player-game as started / off the bench / on the bench / injured / not on the roster, and writes data/<TEAM>.json plus data/teams.json for the web page.
-Usage:  python3 prep.py [--cached] [--season=2026] [TEAM ...]      (default: all 32 teams)"""
-import json, sys, urllib.request
+Also computes yards per play with each player on the field (run and pass plays, sacks included) when nflverse has published the play-by-play
+participation file for the season (it appears after a season ends); without it the page simply leaves that column out.
+Usage:  python3 prep.py [--cached] [--season=2026] [TEAM ...]      (default: all 32 teams; output goes to data/<season>/)"""
+import json, sys, urllib.error, urllib.request
 from pathlib import Path
 import pandas as pd
 
@@ -32,19 +34,33 @@ PALETTE = {"ARI": ("#97233f", "#e0a526"), "ATL": ("#a71930", "#9aa4ab"), "BAL": 
            "MIN": ("#4f2683", "#e0a60a"), "NE": ("#1c3f77", "#c8102e"), "NO": ("#b8902d", "#2b2b2b"), "NYG": ("#1a3f9a", "#a71930"), "NYJ": ("#125740", "#9aa5ad"),
            "PHI": ("#004c54", "#8a9199"), "PIT": ("#2a2a2a", "#e0a60a"), "SEA": ("#4c9a1a", "#1b3a63"), "SF": ("#aa0000", "#b3995d"), "TB": ("#d50a0a", "#3b3b3b"),
            "TEN": ("#3d86d0", "#c8102e"), "WAS": ("#5a1414", "#e09a00")}
-(HERE / "raw").mkdir(exist_ok=True)
+RAW = HERE / next((x.split("=", 1)[1] for x in sys.argv[1:] if x.startswith("--raw=")), "raw")        # where the downloads go (a separate folder lets you build another season)
+OUT = HERE / next((x.split("=", 1)[1] for x in sys.argv[1:] if x.startswith("--out=")), f"data/{SEASON}")
+RAW.mkdir(exist_ok=True)
 for k, url in SRC.items():
-    dst = HERE / "raw" / f"{k}.csv"
+    dst = RAW / f"{k}.csv"
     if "--cached" in sys.argv and dst.exists(): continue      # reuse the files already downloaded
     print("download", k, "...", end=" ", flush=True)
     urllib.request.urlretrieve(url, dst)
     print(f"{dst.stat().st_size / 1e6:.1f} MB")
 
-snaps_all = pd.read_csv(HERE / "raw/snaps.csv")
-inj_all = pd.read_csv(HERE / "raw/inj.csv")
-ros_all = pd.read_csv(HERE / "raw/roster.csv", low_memory=False)
-depth_all = pd.read_csv(HERE / "raw/depth.csv")
-games = pd.read_csv(HERE / "raw/games.csv")
+# on-field data (who was on the field for each play) only exists once nflverse has published the participation file
+PART, PBP = RAW / "part.csv", RAW / "pbp.csv"
+if not ("--cached" in sys.argv and PART.exists() and PBP.exists()):
+    try:
+        print("download on-field data ...", end=" ", flush=True)
+        urllib.request.urlretrieve(f"{BASE}/pbp_participation/pbp_participation_{SEASON}.csv", PART)
+        urllib.request.urlretrieve(f"{BASE}/pbp/play_by_play_{SEASON}.csv", PBP)
+        print("ok")
+    except urllib.error.HTTPError:
+        print(f"not published for {SEASON} yet")
+        PART.unlink(missing_ok=True)
+
+snaps_all = pd.read_csv(RAW / "snaps.csv")
+inj_all = pd.read_csv(RAW / "inj.csv")
+ros_all = pd.read_csv(RAW / "roster.csv", low_memory=False)
+depth_all = pd.read_csv(RAW / "depth.csv")
+games = pd.read_csv(RAW / "games.csv")
 GROUP = {"QB": "QB", "RB": "RB", "FB": "RB", "WR": "WR", "TE": "TE", "T": "OL", "G": "OL", "C": "OL", "OL": "OL",
          "DE": "DL", "DT": "DL", "NT": "DL", "DL": "DL", "LB": "LB", "ILB": "LB", "OLB": "LB", "MLB": "LB",
          "CB": "DB", "S": "DB", "SS": "DB", "FS": "DB", "DB": "DB"}
@@ -60,6 +76,27 @@ _names = pd.concat([ros_all[["full_name", "gsis_id"]].rename(columns={"full_name
                     inj_all[["full_name", "gsis_id"]].rename(columns={"full_name": "n"})]).dropna()
 NAME2GSIS = {norm(n): g for n, g in zip(_names.n, _names.gsis_id)}
 UNMAPPED = {}
+
+
+def compute_ypp():
+    """{team: {unit: {avg, plays, players: {id: [plays, yards per play]}}}} or None when the on-field data is missing."""
+    if not (PART.exists() and PBP.exists()): return None
+    p = pd.read_csv(PBP, low_memory=False, usecols=["game_id", "play_id", "season_type", "posteam", "defteam", "play_type", "yards_gained", "qb_kneel", "qb_spike"])
+    p = p[(p.season_type == "REG") & p.play_type.isin(["run", "pass"]) & (p.qb_kneel != 1) & (p.qb_spike != 1) & p.yards_gained.notna()]
+    m = p.merge(pd.read_csv(PART, usecols=["nflverse_game_id", "play_id", "offense_players", "defense_players"]), left_on=["game_id", "play_id"], right_on=["nflverse_game_id", "play_id"])
+    res = {}
+    for unit, tcol, pcol in (("Offense", "posteam", "offense_players"), ("Defense", "defteam", "defense_players")):
+        tot = m.groupby(tcol).yards_gained.agg(["mean", "count"])
+        ex = m[[tcol, "yards_gained", pcol]].dropna()
+        ex = ex.assign(pid=ex[pcol].str.split(";")).explode("pid")
+        g = ex.groupby([tcol, "pid"]).yards_gained.agg(["count", "mean"])
+        for (tm, pid), r in g.iterrows():
+            res.setdefault(tm, {}).setdefault(unit, dict(avg=round(float(tot.loc[tm, "mean"]), 3), plays=int(tot.loc[tm, "count"]), players={}))["players"][pid] = [int(r["count"]), round(float(r["mean"]), 2)]
+    print(f"on-field yards per play: {len(m)} plays")
+    return res
+
+
+YPP = compute_ypp()
 
 
 def build(TEAM):
@@ -95,7 +132,13 @@ def build(TEAM):
         if not s["played"]: continue
         snap = depth[depth.ts <= s["kickoff"]]
         if snap.empty: slots_by_wk[s["week"]] = {}; continue
-        snap = snap[snap.ts == snap.ts.max()]
+        # use the latest snapshot that lists a full lineup (a few snapshots are cut off, e.g. only 4 offensive slots on one game morning)
+        pick = snap[snap.ts == snap.ts.max()]
+        for ts in sorted(snap.ts.unique(), reverse=True):
+            cand = snap[snap.ts == ts]
+            if cand[cand.pos_grp == "3WR 1TE"].pos_slot.nunique() >= 10 and cand[cand.pos_grp.str.startswith("Base")].pos_slot.nunique() >= 10:
+                pick = cand; break
+        snap = pick
         s["depth_asof"] = snap.ts.max().isoformat()
         snap = snap[snap.pos_grp.isin(["3WR 1TE", "Base 4-3 D", "Base 3-4 D"])].sort_values("pos_rank")
         slots_by_wk[s["week"]] = {k: list(dict.fromkeys(v.gsis_id.dropna())) for k, v in snap.groupby(["pos_grp", "pos_slot"])}
@@ -203,21 +246,27 @@ def build(TEAM):
         p["share"] = round(p["snaps"] / possible[p["unit"]], 4) if possible[p["unit"]] else 0
     players.sort(key=lambda p: (ORDER.index(p["group"]), -p["snaps"], p["name"]))
 
+    yt = (YPP or {}).get(TEAM)
+    if yt:
+        for p in players:
+            e = yt.get(p["unit"], {}).get("players", {}).get(p["id"]); p["ypp"] = e
     out = dict(team=TEAM, teamName=NAMES.get(TEAM, TEAM), color=PALETTE[TEAM][0], palette=dict(start=PALETTE[TEAM][0], sub=PALETTE[TEAM][1]), season=SEASON, asof=max((s["date"] for s in sched if s["played"]), default=""), weeks_played=len(played_weeks),
-               sched=[{k: v for k, v in s.items() if k != "kickoff"} for s in sched], unit_snaps=unit_snaps, possible=possible, groups=ORDER, players=players, stPlayers=st_players, stGroups=["Specialists", "Coverage and returns"])
+               sched=[{k: v for k, v in s.items() if k != "kickoff"} for s in sched], unit_snaps=unit_snaps, possible=possible, groups=ORDER, players=players, stPlayers=st_players, stGroups=["Specialists", "Coverage and returns"], hasYpp=bool(yt), yppTeam=({u: dict(avg=v["avg"], plays=v["plays"]) for u, v in yt.items()} if yt else None), minYppPlays=100)
     return out
 
 
 teams = ARGS or sorted(NAMES)
-(HERE / "data").mkdir(exist_ok=True)
+OUT.mkdir(parents=True, exist_ok=True)
 index = []
 for tm in teams:
     out = build(tm)
-    (HERE / "data" / f"{tm}.json").write_text(json.dumps(out, separators=(",", ":")))
+    (OUT / f"{tm}.json").write_text(json.dumps(out, separators=(",", ":")))
     rec = [sum(1 for s in out["sched"] if s["result"] == r) for r in ("W", "L", "T")]
     index.append(dict(code=tm, name=out["teamName"], color=out["color"], sub=out["palette"]["sub"], w=rec[0], l=rec[1], t=rec[2], weeks=out["weeks_played"], asof=out["asof"]))
     print(f"{tm}: {len(out['players'])} players, {out['weeks_played']} games, {len(out['stPlayers'])} special-teams rows")
 if not ARGS:
     index.sort(key=lambda x: x["name"])
-    (HERE / "data" / "teams.json").write_text(json.dumps(dict(season=SEASON, teams=index), separators=(",", ":")))
+    (OUT / "teams.json").write_text(json.dumps(dict(season=SEASON, teams=index), separators=(",", ":")))
+    seasons = sorted((int(d.name) for d in (HERE / "data").iterdir() if d.is_dir() and d.name.isdigit() and (d / "teams.json").exists()), reverse=True)
+    (HERE / "data" / "seasons.json").write_text(json.dumps(dict(seasons=seasons), separators=(",", ":")))
 if UNMAPPED: print("positions without a unit (skipped):", UNMAPPED)
